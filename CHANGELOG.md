@@ -6,6 +6,50 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [Unreleased] – 2026-03-09 15:00 – Epic: User Security Migration (BUILD phase)
+
+### Added
+
+- **Task 1 – Token-based Authentication Middleware** (`services/security_platform/auth_middleware.py`)
+  - `AuthMiddleware` class (Starlette `BaseHTTPMiddleware`) for FastAPI; extracts Bearer token,
+    validates signature and expiration via `jwt_util.validate_token()`.
+  - Logs success (`INFO`) and all failure modes (`WARNING`): missing token, expired token,
+    invalid/tampered token.
+  - Returns HTTP 401 with descriptive JSON error for all authentication failures.
+  - Calls `call_next(request)` only after successful token validation.
+  - Public path bypass list: `/health`, `/auth/login`, `/docs`, `/openapi.json`, `/redoc`.
+  - 16 unit tests in `services/security_platform/tests/test_auth_middleware.py` covering all
+    success/failure scenarios and logging assertions (AC1, AC2, AC3 satisfied).
+
+- **Task 2 – AuthController FastAPI Microservice** (`services/security_platform/`)
+  - `services/security_platform/main.py` – FastAPI `AuthController` with:
+    `GET /health`, `POST /auth/login` (issues signed JWT with roles), `POST /auth/logout`
+    (jti-based token revocation). Integrates `AuthMiddleware` for all protected routes.
+  - `services/security_platform/utils/jwt_util.py` – `generate_token()`, `validate_token()`,
+    `verify_credentials()`, `get_user_roles()`; PyJWT-backed, environment-driven configuration.
+  - `services/security_platform/pyproject.toml` + `requirements.txt` – Poetry 2.x config with
+    FastAPI, uvicorn, pydantic, PyJWT dependencies.
+  - 13 unit tests (`test_auth_controller.py`) + 6 integration tests (`test_integration.py`)
+    covering login flows, token structure, role embedding, and error handling (AC1, AC2, AC3).
+
+- **Task 3 – Refactored User Authentication Service** (`services/authentication/`)
+  - `services/authentication/user_repository.py` – `UserRepository` class following the
+    repository pattern (mirrors `services/loan_management/repository.py`); methods:
+    `getUser()`, `getUserById()`, `addUser()`, `updateUser()`, `deleteUser()`,
+    `verifyPassword()`, `listUsers()`; in-memory dict store for O(1) lookups; PBKDF2-HMAC-SHA256
+    password hashing preserving legacy format (AC3).
+  - `services/authentication/user_auth_service.py` – `UserAuthService` class; delegates all
+    persistence to `UserRepository`; methods: `register()`, `authenticate()`, `update_user()`,
+    `get_user()`, `deactivate()`; separates business logic from data access.
+  - 33 integration tests in `services/authentication/tests/test_user_auth_service.py` covering
+    all CRUD paths, duplicate/blank validation, partial updates, password rehashing, O(1)
+    performance guard (1,000 lookups < 1 s), and legacy data integrity (AC1, AC2, AC3).
+
+### Test Results
+- **62 new tests pass, 0 failures** (auth_middleware: 16, auth_controller: 13, integration: 6, user_auth_service: 33)
+
+---
+
 ## [Unreleased] – 2026-03-09 14:00 – Epic: Infrastructure Upgrade (TEST phase)
 
 ### Added (TEST phase)
