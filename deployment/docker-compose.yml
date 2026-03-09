@@ -1,0 +1,196 @@
+version: "3.9"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Natanael – Deployment Docker Compose
+#
+# Orchestrates all microservices for local development and integration testing.
+# Run from the repo root:
+#
+#   docker-compose -f deployment/docker-compose.yml up --build
+#
+# Environment variables are read from a .env file in the repo root.
+# Copy .env.example → .env and adjust values before starting.
+#
+# Port mapping summary:
+#   5000 → auth-service   (microservices/auth_service – RBAC-aware JWT service)
+#   5001 → authentication (services/authentication – OAuth2-capable auth service)
+#   5002 → loan-management
+#   5003 → client-management
+#   5432 → PostgreSQL
+#   6379 → Redis
+#   80   → Nginx (HTTP reverse proxy)
+#
+# NOTE: If any of the above ports conflict with local processes, override them
+# by setting PORT_<SERVICE> environment variables before running compose, e.g.:
+#   PORT_AUTH_SERVICE=5010 docker-compose -f deployment/docker-compose.yml up
+# ─────────────────────────────────────────────────────────────────────────────
+
+networks:
+  # Single bridge network; all containers communicate by service name.
+  natanael-net:
+    driver: bridge
+
+volumes:
+  postgres-data:   # Persists PostgreSQL data across container restarts
+  redis-data:      # Persists Redis AOF data across container restarts
+
+services:
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # Infrastructure services
+  # ───────────────────────────────────────────────────────────────────────────
+
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-natanael}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-natanael_secret}
+      POSTGRES_DB: ${POSTGRES_DB:-natanael_db}
+    ports:
+      - "${PORT_POSTGRES:-5432}:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    networks:
+      - natanael-net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-natanael}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    ports:
+      - "${PORT_REDIS:-6379}:6379"
+    volumes:
+      - redis-data:/data
+    # AOF persistence keeps data durable across restarts
+    command: redis-server --appendonly yes
+    networks:
+      - natanael-net
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  nginx:
+    image: nginx:1.25-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      # Routes /auth/ → auth-service:5000, /loans/ → loan-management:8000, etc.
+      - ../infra/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+    networks:
+      - natanael-net
+    depends_on:
+      - authentication
+      - auth-service
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # Microservices
+  # ───────────────────────────────────────────────────────────────────────────
+
+  auth-service:
+    # RBAC-capable JWT microservice (microservices/auth_service).
+    # Dockerfile: microservices/auth_service/Dockerfile
+    build:
+      context: ../microservices/auth_service
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    env_file:
+      - ../.env
+    environment:
+      FLASK_ENV: ${FLASK_ENV:-development}
+      SECRET_KEY: ${SECRET_KEY:-dev-secret-key-change-in-prod}
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:-jwt-secret-change-in-prod}
+      JWT_ACCESS_TOKEN_EXPIRES_MINUTES: ${JWT_ACCESS_TOKEN_EXPIRES_MINUTES:-60}
+      JWT_REFRESH_TOKEN_EXPIRES_DAYS: ${JWT_REFRESH_TOKEN_EXPIRES_DAYS:-7}
+      AUTH_SERVICE_HOST: 0.0.0.0
+      AUTH_SERVICE_PORT: "5000"
+    ports:
+      - "${PORT_AUTH_SERVICE:-5000}:5000"
+    networks:
+      - natanael-net
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:5000/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  authentication:
+    # OAuth2-capable authentication service (services/authentication).
+    # Dockerfile: services/authentication/Dockerfile
+    build:
+      context: ../services/authentication
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    env_file:
+      - ../.env
+    environment:
+      FLASK_ENV: ${FLASK_ENV:-development}
+      SECRET_KEY: ${SECRET_KEY:-dev-secret-key-change-in-prod}
+      JWT_EXPIRY_MINUTES: ${JWT_EXPIRY_MINUTES:-60}
+      REDIS_URL: redis://redis:6379/0
+      TOKEN_BLACKLIST_BACKEND: ${TOKEN_BLACKLIST_BACKEND:-redis}
+    ports:
+      - "${PORT_AUTHENTICATION:-5001}:5000"
+    networks:
+      - natanael-net
+    depends_on:
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:5000/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  loan-management:
+    # Placeholder: run directly from source until a Dockerfile is added.
+    # Replace the `image` + `command` block with a proper `build` section
+    # once services/loan_management/Dockerfile exists.
+    image: python:3.12-slim
+    restart: unless-stopped
+    working_dir: /app
+    volumes:
+      - ../services/loan_management:/app
+    command: >
+      sh -c "pip install fastapi uvicorn --quiet &&
+             uvicorn main:create_fastapi_app --factory --host 0.0.0.0 --port 8000"
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-natanael}:${POSTGRES_PASSWORD:-natanael_secret}@postgres:5432/${POSTGRES_DB:-natanael_db}
+      # Auth service URL used for token validation between services
+      AUTH_SERVICE_URL: http://auth-service:5000
+    ports:
+      - "${PORT_LOAN:-5002}:8000"
+    networks:
+      - natanael-net
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  client-management:
+    # Placeholder: run directly from source until a Dockerfile is added.
+    # Replace the `image` + `command` block with a proper `build` section
+    # once services/client_management/Dockerfile exists.
+    image: python:3.12-slim
+    restart: unless-stopped
+    working_dir: /app
+    volumes:
+      - ../services/client_management:/app
+    command: echo "Client management service – placeholder (no Dockerfile yet)"
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-natanael}:${POSTGRES_PASSWORD:-natanael_secret}@postgres:5432/${POSTGRES_DB:-natanael_db}
+      AUTH_SERVICE_URL: http://auth-service:5000
+    ports:
+      - "${PORT_CLIENT:-5003}:8000"
+    networks:
+      - natanael-net
+    depends_on:
+      postgres:
+        condition: service_healthy

@@ -6,6 +6,89 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [Unreleased] – 2026-03-09 14:00 – Epic: Infrastructure Upgrade (TEST phase)
+
+### Added (TEST phase)
+
+- **Task 1 – Unit Tests for Dockerized Microservices (Jest)**
+  - `src/microservices/authentication/UserService.js` – JavaScript UserService module:
+    `createUser`, `authenticateUser`, `getUserById`, `validateToken`, `revokeToken`,
+    `deactivateUser`. PBKDF2 password hashing, JWT issuance/verification, in-memory
+    user store with blacklist support.
+  - `src/microservices/authentication/app.js` – Express wrapper exposing UserService
+    as a REST API (`/health`, `/auth/register`, `/auth/login`, `/auth/logout`,
+    `/auth/users/:userId`, `/auth/deactivate/:userId`).
+  - `src/microservices/payment/PaymentProcessor.js` – JavaScript PaymentProcessor:
+    `initiatePayment`, `confirmPayment`, `cancelPayment`, `getPayment`,
+    `getByIdempotencyKey`. Idempotency key support, status-transition validation.
+  - `src/microservices/payment/app.js` – Express wrapper exposing PaymentProcessor
+    as a REST API (`/health`, `/payments/initiate`, `/payments/:id`,
+    `/payments/:id/confirm`, `/payments/:id/cancel`).
+  - `src/microservices/authentication/__tests__/UserService.test.js` – 65 Jest unit
+    tests for all critical UserService functions; >98% statement/line coverage.
+  - `src/microservices/payment/__tests__/PaymentProcessor.test.js` – 35 Jest unit
+    tests for all critical PaymentProcessor functions; >98% statement/line coverage.
+  - `package.json` – Jest configuration with coverage thresholds (90% statements,
+    lines, functions; 85% branches) applied to both critical modules.
+
+- **Task 2 – Integration Tests for Dockerized Microservices (SuperTest + Jest)**
+  - `src/microservices/integration/auth-payment.integration.test.js` – 25 SuperTest
+    integration tests covering: service health checks, authenticated payment
+    initiation (JWT data flow from auth → payment), full register→login→pay→confirm
+    and register→login→pay→cancel workflows, inactive-user blocking, unauthenticated
+    request rejection, error handling for malformed requests, no password-field
+    leakage in any response, multiple independent user sessions, and idempotency
+    key deduplication across both services.
+
+- **CI/CD** – `ci_cd/jenkins/Jenkinsfile` updated with a `JS Unit & Integration Tests`
+  stage that runs `npm ci && npm run test:ci` and publishes JUnit + LCOV coverage
+  reports; stage is independent of the Python `Unit Tests` stage.
+
+---
+
+## [Unreleased] – 2026-03-09 12:00 – Epic: Infrastructure Upgrade
+
+### Added (BUILD phase)
+
+- **Task 1 – Dockerise auth-service microservice** (`microservices/auth_service/`)
+  - `microservices/auth_service/Dockerfile` – lightweight `python:3.12-slim` image;
+    non-root `appuser`; installs pinned dependencies via `requirements.txt`; copies
+    the service directory as the `auth_service` package so relative imports resolve;
+    runs Gunicorn with 4 workers bound to `0.0.0.0:5000`.
+  - `microservices/auth_service/.dockerignore` – excludes `__pycache__`, test
+    artefacts, virtual environments, and `.env` from the build context.
+  - `.env.example` – environment variable template covering Flask, JWT, OAuth2,
+    PostgreSQL, Redis, AWS, and Jenkins/Slack settings.
+
+- **Task 2 – Docker Compose for deployment** (`deployment/docker-compose.yml`)
+  - Orchestrates all microservices for local development: `auth-service`,
+    `authentication`, `loan-management` (placeholder), `client-management`
+    (placeholder), plus `postgres`, `redis`, and `nginx` infrastructure services.
+  - All services share the `natanael-net` bridge network for inter-container
+    communication by service name.
+  - Environment variables loaded from `.env` via `env_file`; all ports are
+    overridable via `PORT_<SERVICE>` variables to avoid local conflicts.
+  - Inline comments explain non-standard configurations (placeholder commands,
+    volume mounts, health-check paths).
+
+- **Task 3 – CI/CD pipeline** (`.ci/docker-pipeline.yml`, `docs/technical_debt.md`)
+  - `.ci/docker-pipeline.yml` – GitHub Actions pipeline with four sequential stages:
+    - **lint** – flake8 + mypy across all Python source trees
+    - **test** – full pytest suite with Redis service container; uploads JUnit XML
+      and Cobertura coverage artefacts
+    - **build** – parallel matrix building `auth-service` and `authentication`
+      images; `/health` smoke-test validates each image before push
+    - **push** – logs in to the configured registry and pushes SHA + branch +
+      semver + `latest` tags (main-branch pushes only)
+  - Activation instructions embedded in file header; covers secrets, retry
+    behaviour, port-conflict guidance, and adding new services to the matrix.
+  - `docs/technical_debt.md` – full technical debt report including: CI/CD setup
+    instructions, stage descriptions, required secrets table, image tagging
+    strategy, retry/failure handling, step-by-step activation guide, and
+    Mermaid pipeline diagram.
+
+---
+
 ## [Unreleased] – 2026-03-09 11:00 – Epic: Loan Management Migration (TEST phase)
 
 ### Added (TEST phase)

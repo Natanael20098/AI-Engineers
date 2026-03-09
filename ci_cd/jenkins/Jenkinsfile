@@ -76,6 +76,28 @@ pipeline {
             }
         }
 
+        stage('JS Unit & Integration Tests') {
+            steps {
+                sh '''
+                    node --version
+                    npm ci
+                    npm run test:ci -- \
+                        --testResultsProcessor jest-junit \
+                        --coverageReporters lcov text-summary
+                '''
+            }
+            post {
+                always {
+                    junit allowEmptyResults: true, testResults: 'junit.xml'
+                    publishCoverage adapters: [istanbulCoberturaAdapter(path: 'coverage/lcov.info')]
+                }
+            }
+            environment {
+                JEST_JUNIT_OUTPUT_DIR = '.'
+                JEST_JUNIT_OUTPUT_NAME = 'junit.xml'
+            }
+        }
+
         stage('Build Docker Image') {
             steps {
                 script {
