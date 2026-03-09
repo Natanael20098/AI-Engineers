@@ -8,6 +8,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased] – 2026-03-09 – Epic: User Authentication
 
+### Added (DOCS phase)
+- `docs/auth_api_docs.md` – comprehensive API documentation covering all authentication endpoints: `POST /auth/login`, `POST /auth/logout`, `GET /auth/oauth2/authorize`, `GET /auth/oauth2/callback`, `POST /auth/refresh-token`, `GET /auth/protected`, `GET /health`, `POST /sessions/create`, `POST /sessions/refresh`, `POST /sessions/terminate`; includes JWT payload structure, environment configuration reference, token blacklist backend comparison, RBAC role/permission model, Mermaid flow diagrams, and curl examples for every endpoint
+
 ### Added (TEST phase)
 - `microservices/auth_service/tests/test_jwt_util.py` – extended with `TestGenerateRefreshToken`, `TestExtractUsername`, `TestEdgeCases` classes; `jwt_util.py` now at **100% coverage** (Task 1)
 - `services/tests/integration/test_authentication_flow_it.py` – full authentication flow integration tests covering login, token validation via endpoints, token uniqueness, and error handling (Task 2 / AuthenticationFlowIT)
