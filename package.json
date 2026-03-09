@@ -1,0 +1,48 @@
+{
+  "name": "natanael-microservices-js",
+  "version": "1.0.0",
+  "description": "JavaScript microservice modules and tests for the Natanael platform",
+  "private": true,
+  "scripts": {
+    "test": "jest",
+    "test:unit": "jest --testPathPattern='__tests__'",
+    "test:integration": "jest --testPathPattern='integration'",
+    "test:coverage": "jest --coverage",
+    "test:ci": "jest --coverage --coverageReporters=lcov --coverageReporters=text --forceExit"
+  },
+  "dependencies": {
+    "express": "^4.18.3",
+    "jsonwebtoken": "^9.0.2"
+  },
+  "devDependencies": {
+    "jest": "^29.7.0",
+    "supertest": "^7.0.0"
+  },
+  "jest": {
+    "testEnvironment": "node",
+    "testMatch": [
+      "**/src/microservices/**/__tests__/**/*.test.js",
+      "**/src/microservices/**/integration/**/*.test.js",
+      "**/src/microservices/**/*.integration.test.js"
+    ],
+    "collectCoverageFrom": [
+      "src/microservices/authentication/UserService.js",
+      "src/microservices/payment/PaymentProcessor.js"
+    ],
+    "coverageThreshold": {
+      "global": {
+        "branches": 85,
+        "functions": 90,
+        "lines": 90,
+        "statements": 90
+      }
+    },
+    "coverageReporters": [
+      "text",
+      "text-summary",
+      "lcov"
+    ],
+    "testTimeout": 15000,
+    "verbose": true
+  }
+}

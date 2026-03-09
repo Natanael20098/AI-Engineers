@@ -1,0 +1,278 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Natanael – Docker CI/CD Pipeline (GitHub Actions)
+#
+# SETUP INSTRUCTIONS
+# ──────────────────
+# 1. Copy this file to .github/workflows/docker-pipeline.yml in your repo.
+# 2. Add the following secrets in GitHub → Settings → Secrets and variables →
+#    Actions:
+#
+#    DOCKER_REGISTRY   Container registry host
+#                      • GitHub Container Registry: ghcr.io
+#                      • AWS ECR: <account>.dkr.ecr.<region>.amazonaws.com
+#    DOCKER_USERNAME   Registry login (for GHCR use your GitHub username)
+#    DOCKER_PASSWORD   Registry token / password
+#                      (for GHCR: a Personal Access Token with write:packages)
+#    SECRET_KEY        Flask secret key used during integration tests
+#    JWT_SECRET_KEY    JWT signing secret used during integration tests
+#
+# 3. Push to `main` or open a pull request targeting `main` to trigger the
+#    pipeline.
+#
+# PIPELINE STAGES
+# ───────────────
+#   lint  →  test  →  build  →  push (main branch only)
+#
+# • lint   – flake8 + mypy across all Python source trees
+# • test   – full pytest suite with Redis service container; uploads JUnit XML
+#            and Cobertura coverage artifacts
+# • build  – builds Docker images for all containerised services; runs a
+#            /health smoke-test against each image
+# • push   – logs in to the registry and pushes tagged images (sha + branch +
+#            semver if a tag was pushed); only executes on pushes to main
+#
+# RETRY & FAILURE HANDLING
+# ─────────────────────────
+# Each job uses `continue-on-error: false` (the default), so a failure in any
+# stage blocks downstream stages. The `build` matrix runs services in parallel;
+# if one service fails its smoke-test the entire build job fails.
+# Re-triggering the workflow retries all stages from scratch.
+#
+# PORT CONFLICTS
+# ──────────────
+# The smoke-test step maps the container to host port 5099. If that port is
+# in use on the CI runner, change the mapping in the "Smoke-test image" step.
+# ─────────────────────────────────────────────────────────────────────────────
+
+name: Docker Build, Test & Push
+
+on:
+  push:
+    branches: [main, develop]
+    tags:
+      - "v*.*.*"
+  pull_request:
+    branches: [main]
+
+env:
+  # Registry host; falls back to GitHub Container Registry if secret is unset.
+  REGISTRY: ${{ secrets.DOCKER_REGISTRY || 'ghcr.io' }}
+  PROJECT: natanael
+
+jobs:
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # Stage 1: Lint & static analysis
+  # ───────────────────────────────────────────────────────────────────────────
+  lint:
+    name: Lint & Static Analysis
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Poetry 2.x
+        run: pip install "poetry>=2.0,<3.0"
+
+      - name: Install root dev dependencies
+        run: poetry install --no-root
+
+      - name: Run flake8
+        run: |
+          poetry run flake8 microservices/ services/ auth/ \
+            --max-line-length=88 \
+            --exclude=.venv,__pycache__,*.egg-info
+
+      - name: Run mypy (non-blocking)
+        # mypy is run with || true so type errors don't fail the pipeline until
+        # strict typing is fully adopted across the codebase.
+        run: |
+          poetry run mypy microservices/ services/ auth/ \
+            --ignore-missing-imports || true
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # Stage 2: Unit & integration tests
+  # ───────────────────────────────────────────────────────────────────────────
+  test:
+    name: Unit & Integration Tests
+    runs-on: ubuntu-latest
+    needs: lint
+
+    services:
+      # Redis is required by token_store.py (redis backend) and integration tests.
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Poetry 2.x
+        run: pip install "poetry>=2.0,<3.0"
+
+      - name: Install root dependencies
+        run: poetry install --no-root
+
+      - name: Run test suite
+        env:
+          FLASK_ENV: testing
+          SECRET_KEY: ${{ secrets.SECRET_KEY || 'ci-test-secret' }}
+          JWT_SECRET_KEY: ${{ secrets.JWT_SECRET_KEY || 'ci-jwt-test-secret' }}
+          REDIS_URL: redis://localhost:6379/0
+          TOKEN_BLACKLIST_BACKEND: redis
+        run: |
+          poetry run pytest \
+            --cov=services --cov=microservices --cov=auth \
+            --cov-report=xml:coverage.xml \
+            --junitxml=test-results.xml \
+            -v
+
+      - name: Upload test artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: |
+            test-results.xml
+            coverage.xml
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # Stage 3: Build Docker images (parallel per service)
+  # ───────────────────────────────────────────────────────────────────────────
+  build:
+    name: Build – ${{ matrix.service.name }}
+    runs-on: ubuntu-latest
+    needs: test
+
+    strategy:
+      matrix:
+        service:
+          - name: auth-service
+            context: microservices/auth_service
+            dockerfile: microservices/auth_service/Dockerfile
+          - name: authentication
+            context: services/authentication
+            dockerfile: services/authentication/Dockerfile
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Extract image metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.PROJECT }}/${{ matrix.service.name }}
+          tags: |
+            type=sha,prefix=
+            type=ref,event=branch
+            type=ref,event=pr
+
+      - name: Build Docker image (no push)
+        uses: docker/build-push-action@v5
+        with:
+          context: ${{ matrix.service.context }}
+          file: ${{ matrix.service.dockerfile }}
+          push: false
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          # Layer cache shared across runs via GitHub Actions cache backend
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          # Load into local Docker daemon for the smoke-test below
+          load: true
+
+      - name: Smoke-test – /health endpoint
+        # Starts the built image, waits for Gunicorn to initialise, then
+        # verifies the /health endpoint returns HTTP 200. Fails the build if
+        # the endpoint is unreachable or returns a non-2xx status.
+        run: |
+          IMAGE=$(echo "${{ steps.meta.outputs.tags }}" | head -1)
+          docker run --rm -d \
+            --name ${{ matrix.service.name }}-smoketest \
+            -e FLASK_ENV=testing \
+            -e SECRET_KEY=ci-test-secret \
+            -e JWT_SECRET_KEY=ci-jwt-test-secret \
+            -p 5099:5000 \
+            "$IMAGE"
+          echo "Waiting for service to start…"
+          sleep 6
+          curl --fail --retry 3 --retry-delay 2 http://localhost:5099/health
+          docker stop ${{ matrix.service.name }}-smoketest
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # Stage 4: Push to container registry (main branch pushes only)
+  # ───────────────────────────────────────────────────────────────────────────
+  push:
+    name: Push – ${{ matrix.service.name }}
+    runs-on: ubuntu-latest
+    needs: build
+    # Only push on direct commits to main (not on PRs).
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+
+    strategy:
+      matrix:
+        service:
+          - name: auth-service
+            context: microservices/auth_service
+            dockerfile: microservices/auth_service/Dockerfile
+          - name: authentication
+            context: services/authentication
+            dockerfile: services/authentication/Dockerfile
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to container registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
+      - name: Extract image metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.PROJECT }}/${{ matrix.service.name }}
+          tags: |
+            type=sha,prefix=
+            type=ref,event=branch
+            type=semver,pattern={{version}}
+            type=raw,value=latest
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: ${{ matrix.service.context }}
+          file: ${{ matrix.service.dockerfile }}
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
