@@ -6,6 +6,49 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [Unreleased] – 2026-03-09 11:00 – Epic: Loan Management Migration (TEST phase)
+
+### Added (TEST phase)
+
+- **Task 1 – Unit tests for LoanApplicationService** (`tests/unit/test_loan_application_service.py`)
+  - 65 unit tests covering all public methods of `LoanRepository`: `create()`, `find_by_id()`, `find_all()`, `update_status()`, `delete()`, and `VALID_STATUSES` constant.
+  - Full negative/edge-case coverage: zero/negative amount, float term_months, invalid status, double-delete, empty store, immutability of other fields on update.
+  - Security assertions: error messages must not expose applicant IDs or raw values.
+  - `autouse` fixture clears the module-level `_loan_store` before and after each test for full isolation.
+  - Achieves 100% branch coverage on `services/loan_management/repository.py`.
+
+- **Task 2 – Integration tests for Loan Repayment Processing** (`tests/integration/test_loan_repayment_processing.py`)
+  - 42 integration tests exercising the Flask loan management app end-to-end.
+  - Covers full repayment pipeline (create → approve → disburse), rejection paths, 409 Conflict guards, 400/404 validation, auth header handling, and security assertions.
+  - Load scenario: 10 concurrent repayment workflows verified at ≥95% success rate; 20-loan unique-ID test; 5-lifecycle timing test (must complete in <5 s).
+  - Achieves 97% branch coverage on `services/loan_management/app.py`.
+
+---
+
+## [Unreleased] – 2026-03-09 10:00 – Epic: Loan Management Migration
+
+### Added (BUILD phase)
+
+- **Task 1 – LoanApplication components migrated to Python microservice** (`services/loan_management/`)
+  - `repository.py` – `LoanRepository` class with full CRUD (`create`, `find_by_id`, `find_all`, `update_status`, `delete`) backed by in-memory store; mirrors legacy Java LoanRepository logic with validation.
+  - `main.py` – FastAPI `LoanController` application factory (`create_fastapi_app`) with endpoints: `GET /health`, `POST /loans`, `GET /loans`, `GET /loans/{loan_id}`, `PUT /loans/{loan_id}/status`, `POST /loans/{loan_id}/approve`, `POST /loans/{loan_id}/reject`, `DELETE /loans/{loan_id}`; Pydantic validation on all request bodies.
+  - `tests/test_loan_controller.py` – 29 FastAPI TestClient tests covering all CRUD operations, validation edge cases, lifecycle workflows, and data integrity checks.
+
+- **Task 2 – Loan Repayment Processing microservice** (`services/payment_microservice/`)
+  - `processor.py` – `PaymentProcessor` class and FastAPI application factory (`create_payment_app`) with endpoints: `GET /health`, `POST /payments/initiate`, `GET /payments/{payment_id}`, `POST /payments/{payment_id}/confirm`, `POST /payments/{payment_id}/cancel`; idempotency via `idempotency_key`; validation for amount, required fields; state-machine guards (only pending payments can be confirmed/cancelled).
+  - `tests/test_processor.py` – 21 FastAPI TestClient tests covering endpoint accessibility, validation, error handling, full simulated payment flow (AC3), and idempotency.
+
+- **Task 3 – Refactored data access layer** (`services/data_access_layer.py`)
+  - SQLAlchemy 2.x session management with `get_engine()`, `build_session_factory()`, `get_db_session()` context manager (commit on success, rollback on `SQLAlchemyError`).
+  - `LoanApplicationORM` declarative model with `to_dict()` preserving backward-compatible data format.
+  - `LoanApplicationDAL` class with CRUD operations and explicit transaction-safe flush semantics.
+  - `services/tests/test_data_access_layer.py` – 21 tests covering all CRUD paths, transaction rollback behaviour, data consistency across sessions, and backward-compatible dict format.
+
+### Test Results
+- **69 new tests pass, 0 failures** (loan controller: 29, payment processor: 21, data access layer: 21 — plus 22 pre-existing loan integration tests unchanged)
+
+---
+
 ## [Unreleased] – 2026-03-09 – Epic: User Authentication
 
 ### Added (DOCS phase)
