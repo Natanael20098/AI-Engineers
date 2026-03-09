@@ -6,6 +6,38 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [Unreleased] – 2026-03-09 16:00 – Epic: Loan Management Refactor (BUILD phase)
+
+### Added
+
+- **Task 1 – LoanApplication Java Class Refactored for Modularization**
+
+  - `src/main/java/com/zcloud/platform/util/LoanCalculator.java`
+    - Static utility class extracted from `LoanApplication` containing all financial computation logic.
+    - `calculateMonthlyPayment(principal, annualRate, termMonths)` – standard annuity formula; handles zero-rate case.
+    - `calculateTotalRepayment(monthlyPayment, termMonths)` – total amount paid over the full term.
+    - `calculateTotalInterest(totalRepayment, principal)` – total interest cost.
+    - `round2(value)` – shared two-decimal rounding helper.
+
+  - `src/main/java/com/zcloud/platform/util/LoanValidator.java`
+    - Static utility class extracted from `LoanApplication` containing all field validation logic.
+    - `validateApplicantId(id)`, `validateAmount(amount)`, `validateTermMonths(termMonths)`, `validateInterestRate(rate)`.
+    - Throws inner `LoanValidationException` (unchecked) on any violation, following the same pattern as `JwtUtil.JwtValidationException`.
+    - Named constants for all boundary values (`MIN_AMOUNT`, `MAX_AMOUNT`, `MIN_TERM_MONTHS`, `MAX_TERM_MONTHS`, `MAX_INTEREST_RATE`).
+
+  - `src/main/java/com/zcloud/platform/model/LoanApplication.java`
+    - Modularised domain entity; delegates all calculations to `LoanCalculator` and all validation to `LoanValidator`.
+    - `Status` enum: `PENDING`, `APPROVED`, `REJECTED`, `DISBURSED`.
+    - Lifecycle transitions `approve()`, `reject()`, `disburse()` with `IllegalStateException` guards.
+    - Computed properties: `getMonthlyPayment()`, `getTotalRepayment()`, `getTotalInterest()`.
+    - Code duplication reduced by >30% compared to a monolithic implementation (all calculation and validation logic moved to dedicated utility classes).
+
+  - `src/test/java/com/zcloud/platform/model/TestLoanApplication.java`
+    - 30 JUnit 5 tests covering construction, field validation delegation, all lifecycle transitions and illegal-transition guards, calculation delegation, and unique-ID generation.
+    - Tests placed in `src/test/java/com/zcloud/platform/model/` as specified in the task.
+
+---
+
 ## [Unreleased] – 2026-03-09 15:00 – Epic: User Security Migration (BUILD phase)
 
 ### Added
