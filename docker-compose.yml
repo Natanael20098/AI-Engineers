@@ -1,0 +1,128 @@
+version: "3.9"
+
+networks:
+  natanael-net:
+    driver: bridge
+
+volumes:
+  postgres-data:
+  redis-data:
+
+services:
+  # ─────────────────────────────────────────
+  # Infrastructure services
+  # ─────────────────────────────────────────
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-natanael}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-natanael_secret}
+      POSTGRES_DB: ${POSTGRES_DB:-natanael_db}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    networks:
+      - natanael-net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-natanael}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    command: redis-server --appendonly yes
+    networks:
+      - natanael-net
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  nginx:
+    image: nginx:1.25-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./infra/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+    networks:
+      - natanael-net
+    depends_on:
+      - authentication
+
+  # ─────────────────────────────────────────
+  # Microservices
+  # ─────────────────────────────────────────
+  authentication:
+    build:
+      context: ./services/authentication
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    environment:
+      FLASK_ENV: ${FLASK_ENV:-development}
+      SECRET_KEY: ${SECRET_KEY:-dev-secret-key-change-in-prod}
+      JWT_EXPIRY_MINUTES: ${JWT_EXPIRY_MINUTES:-60}
+      REDIS_URL: redis://redis:6379/0
+      TOKEN_BLACKLIST_BACKEND: ${TOKEN_BLACKLIST_BACKEND:-redis}
+    ports:
+      - "5001:5000"
+    networks:
+      - natanael-net
+    depends_on:
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:5000/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  loan-management:
+    image: python:3.12-slim
+    restart: unless-stopped
+    working_dir: /app
+    volumes:
+      - ./services/loan_management:/app
+    command: echo "Loan management service - placeholder"
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-natanael}:${POSTGRES_PASSWORD:-natanael_secret}@postgres:5432/${POSTGRES_DB:-natanael_db}
+      AUTH_SERVICE_URL: http://authentication:5000
+    ports:
+      - "5002:8000"
+    networks:
+      - natanael-net
+    depends_on:
+      postgres:
+        condition: service_healthy
+    profiles:
+      - full
+
+  client-management:
+    image: python:3.12-slim
+    restart: unless-stopped
+    working_dir: /app
+    volumes:
+      - ./services/client_management:/app
+    command: echo "Client management service - placeholder"
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-natanael}:${POSTGRES_PASSWORD:-natanael_secret}@postgres:5432/${POSTGRES_DB:-natanael_db}
+      AUTH_SERVICE_URL: http://authentication:5000
+    ports:
+      - "5003:8000"
+    networks:
+      - natanael-net
+    depends_on:
+      postgres:
+        condition: service_healthy
+    profiles:
+      - full

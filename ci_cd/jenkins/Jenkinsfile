@@ -1,0 +1,167 @@
+pipeline {
+    agent any
+
+    environment {
+        AWS_REGION        = 'us-east-1'
+        ECR_REGISTRY      = "${env.AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
+        PROJECT_NAME      = 'natanael'
+        SLACK_CHANNEL     = '#deployments'
+        SLACK_CREDENTIALS = 'slack-webhook-token'
+    }
+
+    parameters {
+        choice(
+            name: 'SERVICE',
+            choices: ['authentication', 'loan-management', 'client-management'],
+            description: 'Microservice to build and deploy'
+        )
+        choice(
+            name: 'ENVIRONMENT',
+            choices: ['dev', 'staging', 'prod'],
+            description: 'Target deployment environment'
+        )
+    }
+
+    options {
+        timeout(time: 30, unit: 'MINUTES')
+        disableConcurrentBuilds()
+        buildDiscarder(logRotator(numToKeepStr: '20'))
+        retry(1)
+    }
+
+    stages {
+        stage('Checkout') {
+            steps {
+                checkout scm
+                script {
+                    env.GIT_COMMIT_SHORT = sh(
+                        script: 'git rev-parse --short HEAD',
+                        returnStdout: true
+                    ).trim()
+                    env.IMAGE_TAG = "${env.GIT_COMMIT_SHORT}-${env.BUILD_NUMBER}"
+                    env.IMAGE_URI = "${ECR_REGISTRY}/${PROJECT_NAME}/${params.SERVICE}:${env.IMAGE_TAG}"
+                }
+            }
+        }
+
+        stage('Lint & Static Analysis') {
+            steps {
+                dir("services/${params.SERVICE.replaceAll('-', '_')}") {
+                    sh '''
+                        pip install poetry==2.*
+                        poetry install --no-root
+                        poetry run flake8 . --max-line-length=88 --exclude=.venv
+                        poetry run mypy . --ignore-missing-imports || true
+                    '''
+                }
+            }
+        }
+
+        stage('Unit Tests') {
+            steps {
+                dir("services/${params.SERVICE.replaceAll('-', '_')}") {
+                    sh '''
+                        poetry run pytest tests/ -v \
+                            --cov=. \
+                            --cov-report=xml:coverage.xml \
+                            --junitxml=test-results.xml
+                    '''
+                }
+            }
+            post {
+                always {
+                    junit "services/${params.SERVICE.replaceAll('-', '_')}/test-results.xml"
+                    publishCoverage adapters: [coberturaAdapter(path: "services/${params.SERVICE.replaceAll('-', '_')}/coverage.xml")]
+                }
+            }
+        }
+
+        stage('Build Docker Image') {
+            steps {
+                script {
+                    sh "bash scripts/deployment/build_scripts.sh build ${params.SERVICE} ${env.IMAGE_TAG}"
+                }
+            }
+        }
+
+        stage('Security Scan') {
+            steps {
+                sh """
+                    docker run --rm \
+                        -v /var/run/docker.sock:/var/run/docker.sock \
+                        aquasec/trivy:latest image \
+                        --exit-code 0 \
+                        --severity HIGH,CRITICAL \
+                        --format table \
+                        ${env.IMAGE_URI}
+                """
+            }
+        }
+
+        stage('Push to ECR') {
+            steps {
+                withAWS(credentials: 'aws-ecr-credentials', region: AWS_REGION) {
+                    sh """
+                        aws ecr get-login-password --region ${AWS_REGION} | \
+                            docker login --username AWS --password-stdin ${ECR_REGISTRY}
+                        bash scripts/deployment/build_scripts.sh push ${params.SERVICE} ${env.IMAGE_TAG} ${ECR_REGISTRY}
+                    """
+                }
+            }
+        }
+
+        stage('Deploy to ECS') {
+            when {
+                expression { params.ENVIRONMENT in ['dev', 'staging', 'prod'] }
+            }
+            steps {
+                withAWS(credentials: 'aws-ecs-credentials', region: AWS_REGION) {
+                    sh """
+                        bash scripts/deployment/build_scripts.sh deploy \
+                            ${params.SERVICE} \
+                            ${env.IMAGE_TAG} \
+                            ${params.ENVIRONMENT} \
+                            ${ECR_REGISTRY}
+                    """
+                }
+            }
+        }
+    }
+
+    post {
+        success {
+            slackSend(
+                channel: SLACK_CHANNEL,
+                color: 'good',
+                tokenCredentialId: SLACK_CREDENTIALS,
+                message: """
+                    :white_check_mark: *BUILD SUCCESS*
+                    Service: `${params.SERVICE}`
+                    Environment: `${params.ENVIRONMENT}`
+                    Build: `#${env.BUILD_NUMBER}`
+                    Commit: `${env.GIT_COMMIT_SHORT}`
+                    Image: `${env.IMAGE_URI}`
+                    <${env.BUILD_URL}|View Build Logs>
+                """.stripIndent()
+            )
+        }
+        failure {
+            slackSend(
+                channel: SLACK_CHANNEL,
+                color: 'danger',
+                tokenCredentialId: SLACK_CREDENTIALS,
+                message: """
+                    :x: *BUILD FAILED*
+                    Service: `${params.SERVICE}`
+                    Environment: `${params.ENVIRONMENT}`
+                    Build: `#${env.BUILD_NUMBER}`
+                    Commit: `${env.GIT_COMMIT_SHORT}`
+                    <${env.BUILD_URL}|View Build Logs>
+                """.stripIndent()
+            )
+        }
+        always {
+            cleanWs()
+        }
+    }
+}
