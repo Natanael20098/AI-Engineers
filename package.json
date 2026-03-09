@@ -1,0 +1,26 @@
+{
+  "name": "zcloud-security-platform",
+  "version": "1.0.0",
+  "description": "ZCloud Security Platform - a comprehensive solution for managing security-related functionalities",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "start:dev": "NODE_ENV=development ts-node src/index.ts",
+    "start:test": "NODE_ENV=testing ts-node src/index.ts",
+    "start:prod": "NODE_ENV=production node dist/index.js",
+    "lint": "eslint src/**/*.ts",
+    "type-check": "tsc --noEmit"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.5"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.5",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.3.3"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
