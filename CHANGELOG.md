@@ -6,6 +6,55 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [Unreleased] – 2026-03-09 – Epic: User Authentication
+
+### Added (DOCS phase)
+- `docs/auth_api_docs.md` – comprehensive API documentation covering all authentication endpoints: `POST /auth/login`, `POST /auth/logout`, `GET /auth/oauth2/authorize`, `GET /auth/oauth2/callback`, `POST /auth/refresh-token`, `GET /auth/protected`, `GET /health`, `POST /sessions/create`, `POST /sessions/refresh`, `POST /sessions/terminate`; includes JWT payload structure, environment configuration reference, token blacklist backend comparison, RBAC role/permission model, Mermaid flow diagrams, and curl examples for every endpoint
+
+### Added (TEST phase)
+- `microservices/auth_service/tests/test_jwt_util.py` – extended with `TestGenerateRefreshToken`, `TestExtractUsername`, `TestEdgeCases` classes; `jwt_util.py` now at **100% coverage** (Task 1)
+- `services/tests/integration/test_authentication_flow_it.py` – full authentication flow integration tests covering login, token validation via endpoints, token uniqueness, and error handling (Task 2 / AuthenticationFlowIT)
+- `auth/__init__.py` + `auth/login.py` – public `generate_jwt()` / `verify_jwt()` API with input validation (Task 3)
+- `tests/unit/auth/test_login.py` – 31 unit tests for `auth/login.py`; **100% coverage** (Task 3)
+- `tests/integration/auth/test_rbac.py` – RBAC integration tests covering role policies, 403 for unauthorized roles, and token expiry handling (Task 4)
+- Updated `pyproject.toml` – `testpaths` extended to include `microservices` and `tests`; `--import-mode=importlib` added; coverage targets expanded
+
+### Test Results
+- **185 tests pass, 0 failures**
+- `auth/login.py`: 100% coverage
+- `microservices/auth_service/utils/jwt_util.py`: 100% coverage
+- Overall project coverage: 95%
+
+
+### Added
+- **Task 4 – Base Python Microservice Structure** (`microservices/auth_service/`)
+  - `main.py` – Flask application factory with `/health` route; environment-based startup.
+  - `config.py` – `Config`, `DevelopmentConfig`, `TestingConfig`, `ProductionConfig` driven by environment variables.
+  - `requirements.txt` – Pinned Flask, PyJWT, gunicorn, python-dotenv.
+
+- **Task 3 + 6 – JWT Authentication Logic + RBAC** (`microservices/auth_service/`)
+  - `utils/jwt_util.py` – `generate_token()` (embeds `userId`, `roles`, `permissions`, `expiry`), `generate_refresh_token()`, `validate_token()`, `renew_token()` (renews even expired tokens), `has_role()`, `check_roles()`, and mock role/permission helpers.
+  - `controllers/LoginController.py` – Flask blueprint with `POST /auth/login` (issues access + refresh tokens with roles), `POST /auth/refresh-token`, `GET /auth/protected` (ROLE_ADMIN required); `jwt_required` and `role_required` decorators.
+  - `tests/test_jwt_util.py` – 23 unit tests covering all jwt_util acceptance criteria.
+  - `tests/test_login_controller.py` – 13 integration tests covering all LoginController acceptance criteria.
+
+- **Task 2 – Session Management API Gateway** (`src/microservices/auth/`)
+  - `user_sessions.py` – `UserSession` dataclass with in-memory store; `create()`, `terminate()`, `update_tokens()`, `is_expired()` methods.
+  - `api_gateway.py` – Flask blueprint with `POST /sessions/create`, `POST /sessions/refresh` (validates token expiry, AC3), `POST /sessions/terminate`; consistent `{status, data}` response envelope (AC2).
+
+- **Task 1 – Java JwtUtil** (`src/main/java/com/zcloud/platform/util/JwtUtil.java`)
+  - `generateToken(userId, roles)` – issues HS256 JWT with `userId`, `roles`, `expiry`, `jti` claims.
+  - `renewToken(token)` – renews even expired tokens by ignoring `exp` during parse.
+  - `validateToken(token)` / `validateToken(token, requiredRole)` – rejects expired, tampered, or payload-incomplete tokens with `JwtValidationException` (401-semantic message).
+  - `src/test/java/.../TestJwtUtil.java` – 10 JUnit 5 tests covering all three ACs.
+
+- **Task 5 – Java SecurityUtils** (`src/main/java/com/zcloud/platform/util/SecurityUtils.java`)
+  - `hasRole()`, `hasRoleInClaims()`, `hasAllRoles()`, `hasAnyRole()` – role-based access checks; thread-safe.
+  - `recordFailedAttempt()`, `getFailedAttemptCount()`, `resetFailedAttempts()`, `isLockedOut()` – concurrent access attempt tracking via `ConcurrentHashMap`.
+  - `src/test/java/.../TestSecurityUtils.java` – 14 JUnit 5 tests covering 100% of new methods.
+
+---
+
 ## [Unreleased] – 2026-03-09
 
 ### Added
