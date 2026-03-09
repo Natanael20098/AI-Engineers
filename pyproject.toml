@@ -38,8 +38,8 @@ strict = false
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]
-testpaths = ["services"]
+testpaths = ["services", "microservices", "tests"]
 python_files = ["test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
-addopts = "--cov=services --cov-report=term-missing"
+addopts = "--import-mode=importlib --cov=services --cov=microservices --cov=auth --cov-report=term-missing"

@@ -8,6 +8,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased] – 2026-03-09 – Epic: User Authentication
 
+### Added (TEST phase)
+- `microservices/auth_service/tests/test_jwt_util.py` – extended with `TestGenerateRefreshToken`, `TestExtractUsername`, `TestEdgeCases` classes; `jwt_util.py` now at **100% coverage** (Task 1)
+- `services/tests/integration/test_authentication_flow_it.py` – full authentication flow integration tests covering login, token validation via endpoints, token uniqueness, and error handling (Task 2 / AuthenticationFlowIT)
+- `auth/__init__.py` + `auth/login.py` – public `generate_jwt()` / `verify_jwt()` API with input validation (Task 3)
+- `tests/unit/auth/test_login.py` – 31 unit tests for `auth/login.py`; **100% coverage** (Task 3)
+- `tests/integration/auth/test_rbac.py` – RBAC integration tests covering role policies, 403 for unauthorized roles, and token expiry handling (Task 4)
+- Updated `pyproject.toml` – `testpaths` extended to include `microservices` and `tests`; `--import-mode=importlib` added; coverage targets expanded
+
+### Test Results
+- **185 tests pass, 0 failures**
+- `auth/login.py`: 100% coverage
+- `microservices/auth_service/utils/jwt_util.py`: 100% coverage
+- Overall project coverage: 95%
+
+
 ### Added
 - **Task 4 – Base Python Microservice Structure** (`microservices/auth_service/`)
   - `main.py` – Flask application factory with `/health` route; environment-based startup.
